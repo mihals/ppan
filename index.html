@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="dist/phaser-arcade-physics.js"></script>
+    <!--script src="dist/phaser.js"></script-->
+</head>
+<body>
+
+    <script>
+    // в абсолютной системе координат раннер движется со скоростью вдвое большей
+    // скорости волкеров, если ему не мешают препятствия, а вирусы покоятся. 
+    // В игре система отсчёта связана с раннером, поэтому раннер покоится, движутся
+    // вирусы (и фон) и в том же направлении, но с вдвое меньшей скоростью движутся волкеры.
+    // Если раннер упирается в волкер, то в абсолютной системе координат его скорость
+    // становится равной скорости волкера, т.е. уменьшается вдвое, в системе координат,
+    // связанной с раннером, волкеры и сам раннер покоятся, а вирусы движутся со 
+    // скоростью вдвое меньшей.
+    
+    let config = {
+        type: Phaser.CANVAS,
+        width: 600,
+        height: 800,
+        backgroundColor: '0xffffff',
+        disableContextMenu:true,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                debug: true
+                }
+            },
+        scene: {
+            
+            preload: preload,
+            create: create,
+            update: update
+        },
+        scale: {
+            autoCenter: Phaser.Scale.CENTER_HORIZONTALLY, 
+            mode: Phaser.Scale.FIT  
+        }
+    };
+
+    let game = new Phaser.Game(config);
+    let virVel=32,walVel=16;
+    let deltaVir,deltaWal;
+    let virDist=0;
+    let walDist=0;
+    let difDist;
+    let virStep=0;
+    let walStep=0;
+    let difStep=0;
+    let virusArr,virusEvt,virusGrp;
+    let walkerArr,walkerEvt,walkerGrp;
+    
+    function preload ()
+    {
+        this.load.image('runner', 'img/runner.png');
+        this.load.image('walker', 'img/walker.png')
+        this.load.image('tile', 'img/tile1.png');
+        this.load.image('virus', 'img/virus.png');
+    }
+
+    function create ()
+    {
+        // массив из двух элементов, содержащих фон игры, когда фон grounds=[0]
+        // опускается на deltaVir за каждый update вызов ниже верхней границы 
+        // области игры, сверху надставляется фон grounds=[1] и далее они 
+        // перемешаются вместе до тех пор, пока верх grounds=[0] не выйдет за
+        // нижнюю границу видимой области, тогда фон из grounds=[0] помещаем
+        // в grounds=[1], а фон из grounds=[1] наоборот в grounds=[0] и продолжаем
+        // двигать далее оба элемента массива дальше синхронно с вирусами 
+
+        grounds=[];
+        this.physics.world.setBounds(90,0,420,800);
+        grounds[0]=this.add.tileSprite(0,0,400,960,'tile');
+        grounds[0].setDisplayOrigin();
+        grounds[0].x=100;
+        grounds[0].y=-160;
+
+        grounds[1]=this.add.tileSprite(0,0,400,960,'tile');
+        grounds[1].setDisplayOrigin();
+        grounds[1].x=100;
+        grounds[1].y=-1000;
+
+        heroVelocity=32;
+
+        
+        let str='[[{"x0":2,"y0":11,"type":"unit","time":0,"health":"healthy"},{"x0":2,"y0":9,"type":"virus","time":0}]]';
+        
+        // var strVir='[{"x":0,"l":5,"iVirSteps":2},{"x":0,"l":14,"iVirSteps":4},{"x":0,"l":10,"iVirSteps":4},{"x":0,"l":22,"iVirSteps":6},{"x":0,"l":18,"iVirSteps":6}]';
+        // var strVirEvt='[[{"numVir":0,"evt":"a"}],[],[{"numVir":0,"evt":"i"},{"numVir":2,"evt":"a"}],[],[{"numVir":1,"evt":"i"},{"numVir":2,"evt":"i"}],[],[{"numVir":1,"evt":"a"},{"numVir":3,"evt":"i"},{"numVir":4,"evt":"i"}],[],[],[],[{"numVir":4,"evt":"a"}],[],[],[],[{"numVir":3,"evt":"a"}],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]]';
+        // var strWal='[{"x":0,"l":3,"iVirSteps":2},{"x":0,"l":6,"iVirSteps":4},{"x":0,"l":10,"iVirSteps":4},{"x":0,"l":12,"iVirSteps":6},{"x":0,"l":16,"iVirSteps":6}]';
+        // var strWalEvt='[[{"numWal":0,"evt":"a"},{"numWal":1,"evt":"a"}],[{"numWal":0,"evt":"i"}],[{"numWal":2,"evt":"a"}],[{"numWal":0,"evt":"d"},{"numWal":1,"evt":"i"},{"numWal":2,"evt":"i"}],[{"numWal":3,"evt":"a"}],[{"numWal":3,"evt":"i"},{"numWal":4,"evt":"i"}],[{"numWal":1,"evt":"d"}],[],[{"numWal":4,"evt":"a"}],[],[{"numWal":2,"evt":"d"}],[],[{"numWal":3,"evt":"d"}],[],[],[],[{"numWal":4,"evt":"d"}],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]]';
+
+        let strVir='[{"x":2,"l":17},{"x":3,"l":17},{"x":4,"l":17}]';
+        let strVirEvt='[[],[{"numVir":0,"evt":"inf"}],[{"numVir":1,"evt":"inf"}],[{"numVir":2,"evt":"inf"}],[],[],[],[{"numVir":0,"evt":"a"},{"numVir":1,"evt":"a"},{"numVir":2,"evt":"a"}],[],[],[],[],[],[],[],[],[{"numVir":0,"evt":"d"},{"numVir":1,"evt":"d"},{"numVir":2,"evt":"d"}],[],[],[],[],[],[],[],[],[],[],[],[],[]]';
+        let strWal='[{"x":2,"l":15},{"x":3,"l":14},{"x":4,"l":13}]';
+        let strWalEvt='[[],[{"numWal":0,"evt":"inf"}],[{"numWal":1,"evt":"inf"}],[{"numWal":2,"evt":"a"},{"numWal":2,"evt":"inf"}],[{"numWal":1,"evt":"a"}],[{"numWal":0,"evt":"a"}],[],[],[],[],[],[],[{"numWal":2,"evt":"d"}],[{"numWal":1,"evt":"d"}],[{"numWal":0,"evt":"d"}],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]]';
+        
+        // в конструкторе Pandemic 17 строчек, которые нумеруются от нуля сверху вниз,
+        // и 5 колонок с нумерацией от нуля слева направо.
+        // Игровое поле Ppan имеет размеры 600х800 пикселов и условно разбито на десять строк,
+        // высотой 80 пикселов и пять колонок, шириной 80 пмкселов,таким образом, нумерация колонок
+        // совпадает с Pandemic, номера строк y связаны отношением Y(Pandemic)=Y(Ppan)+7
+        // В начальный момент времени на нулевом такте (time=0) на игровом поле могут уже 
+        // находиться вирусы и прохожие. Кроме того, в конструкторе Pandemic можно добавить 
+        // через несколько тактов ещё объекты, которые в момент времени time=0 должны бы были 
+        // находиться на поле. 
+        // В системе отсчёта, связанной с раннером, вирусы и прохожие движутся с разной скоростью
+        // вдоль оси Y (вниз) с разной скоростью - если раннер не упёрся в прохожего, скорость
+        // вируса вдвое больше скорости прохожих, если упёрся, то скорость вирусов уменьшается
+        // в два раза, а скорость прохожих становится равной нулю.
+        // В начаьный момент времени расстояние от нижнего края видимой области в Ppan до
+        // нижнего края вируса или прохожего равна 16-y0+time, где y0 и time - данные из
+        // массива timeStamps
+
+        virusGrp=this.add.group();
+        virusArr=JSON.parse(strVir);
+        virusEvt=JSON.parse(strVirEvt);
+
+        for (let i=0;i<20;i++)
+        {
+            spr=this.add.sprite(-100,-100,'virus').setDisplayOrigin().setScale(2);
+            spr.setActive(false);
+            spr.setVisible(false);
+            virusGrp.add(spr);
+            //virusGrp.killAndHide(spr);
+            
+        }
+
+
+        walkerGrp=this.physics.add.group();
+        walkerArr=JSON.parse(strWal);
+        walkerEvt=JSON.parse(strWalEvt);;
+
+        
+        for (let i=0;i<20;i++)
+        {
+            spr=this.add.sprite(-100,-100,'walker').setDisplayOrigin().setScale(2);
+            spr.setSize(80,80);
+            spr.setActive(false);
+            spr.setVisible(false);
+            walkerGrp.add(spr);
+        }
+
+        // на основе массива virusArr, созданного в конструкторе уровней Pandemic,
+        // формируется массив virusEvt, в который заносятся события для вирусов:
+        // появление в видимой области, выход за пределы видимой области.
+        // В группе virusGrp находится некоторое число спрайтов-вирусов, которые
+        // в нужный момент (при появлении в видимой области) активируются - setActive(true)
+        // или деактивируются - spr.setActive(false), освобождая тем самым спрайт
+        // для дальнейшего использования
+        // В virusEvt[0] находится массив вирусов, которые находятся на игровом поле при
+        // начале игры.
+        
+        timeStepV=0;
+        timeStepW=0;
+
+        for(let i=0;i<virusEvt[0].length;i++)
+        {
+            let ind;
+            if(virusEvt[0][i].evt=="a")
+            {
+                ind=virusEvt[0][i].numVir;
+                spr=virusGrp.getFirstDead();
+                if(spr)
+                {
+                    spr.setX(100+virusArr[ind].x*80);
+                    spr.setY((10-virusArr[ind].l)*80);
+                    spr.setActive(true);
+                    spr.setVisible(true);
+                    spr.setData({ col: virusArr[ind].x });
+                    virusArr[ind].spr=spr;
+                }
+            }
+        }
+
+        for(let i=0;i<walkerEvt[0].length;i++)
+        {
+            let ind;
+            if(walkerEvt[0][i].evt=="a")
+            {
+                ind=walkerEvt[0][i].numWal;
+                spr=walkerGrp.getFirstDead();
+                if(spr)
+                {
+                    spr.setX(100+walkerArr[ind].x*80);
+                    spr.setY((10-walkerArr[ind].l)*80);
+                    spr.setActive(true);
+                    spr.setVisible(true);
+                    spr.setData({ col: walkerArr[ind].x });
+                    walkerArr[ind].spr=spr;
+                }
+            }
+        }
+
+        // всё видимое поле 600x800, игровое поле имеет в ширину 400 пикселей,
+        // координата x его левой стороны равна 100, в длину игровое поле 
+        // условно неограничено, но длина видимой части равна 800 пикселям,  
+        // поле условно разбито на клеточки 80х80, получаем
+        // сетку размером 5 клеток в ширину и 10 клеток в длину, каждый
+        // юнит перемешается в своём столбце (за исключением раннера),
+        // нумерация столбцов начинается с нуля и возрастает слева
+        // направо, строк - снизу вверх, для спрайта 80 на 80 пикселей и с якорем
+        // в центре, в нулевом столбце находится юнит с x=140,
+        // в нулевой строке - юнит с y=740
+
+        // timeStep - условный счётчик времени, изначально = 0. Когда фон прокрутится
+        // вниз на высоту клетки (в данном случае на 80 пикселей), увеличивается на
+        // единицу. Таким образом, timeStep - это количество прокрученных строк,
+        // т.е. строк, вышедших за нижнюю границу видимой игровой зоны
+
+        // numGrounds - количество заполненных фонов или, по другому, участков пути,
+        // в каждый момент времени заполнено
+        // два фона - один над другим, которые перемещаются сверху вниз, и как только 
+        // нижний фон выходит за границу видимости, переиндексируем их в массиве grounds,
+        // переместим уже невидимый фон наверх, таким образом фон grounds[1] будет всегда
+        // выше grounds[0].
+
+        // На каждом участке пути расположены вирусы и прохожие, данные о вирусах и
+        // прохожих на каждом участке пути находятся в группах virGroupsArr[0] и
+        // virGroupsArr[1] для вирусов и walGroupsArr[0], walGroupsArr[1] для прохожих,
+        // фон для участков пути - в grounds[0], grounds[1]
+
+                
+        walkers=this.physics.add.group();
+       
+        walker=this.add.sprite(340, 400, 'walker');
+        walker.scale=2; 
+        walker.x=460;
+        walker.y=280;
+        walker.setSize(80,80);
+        walker.setData({ col: 4, row: 5, state: 'healthy' });
+        walkers.add(walker);
+
+        
+        runner = this.physics.add.sprite(300, 700, 'runner');
+        runner.scale=2; 
+        runner.x=300;
+        runnerSrcX=300;
+        runner.y=680;
+        // overlapX!= null, если раннер не пересекается со спрайтом из
+        // соседней колонки, т.е. не касается боком, overlapX=='l', если
+        // левый бок раннера касается спрайта из группы walkers и
+        //  overlapX=='r', если касается правым
+        runner.setData({ col: 2, row: 2, state: 'healthy' });
+        runner.setCollideWorldBounds(true);
+        targetX=null;
+        olpH=null;
+        olpV=false;
+        //virus.setVelocityY(16);
+        walkDis=0;
+        virDis=0;
+        delVW=0;
+        text = this.add.text(400, 600, 'Cursors to move', { font: '20px Courier', fill: '#000000' }).setScrollFactor(0);
+    }
+
+    function update (time, delTime)
+    {
+        deltaVir=virVel*delTime/1000;
+        deltaVir=(deltaVir>20)?20:deltaVir;
+        
+        virDist+=deltaVir;
+        if(Math.floor(virDist/80)!=virStep)
+        {
+            virStep=Math.floor(virDist/80);
+            checkVirEvt(virStep);
+        }
+        
+        deltaWal=walVel*delTime/1000;
+        walDist+=deltaWal;
+        if(Math.floor(walDist/80)!=walStep)
+        {
+            walStep=Math.floor(walDist/80);
+            checkWalEvt(walStep);
+        }
+
+        difDist=virDist-walDist;
+        if(Math.floor(difDist/80)!=difStep)
+        {
+            difStep=Math.floor(difDist/80);
+            checkInfEvt(difStep);
+        }
+       
+       
+        let spr;
+
+        /* var a1=Math.floor(grounds[0].y/80);
+        var a2=Math.floor((grounds[0].y+deltaVir)/80); */
+
+        // если с момента показа предыдущего кадра прокрутилась  до самого выхода
+        // из зоны видимости условная строчка (высотой в 80 пикселов), то прибавляем
+        // единичку к счётчику условного времени (такта). Прокрутка фона на 80 пикселей
+        // увеличивает количество тактов на единичку. События появления в видимой
+        // области и исчезновения из неё пешеходов и вирусов привязаны к номеру такта timeStepV
+        // if(Math.floor(grounds[0].y/80)!=Math.floor((grounds[0].y+deltaVir)/80))
+        // {
+        //     timeStepV++;
+
+        //     // проверяем появились ипи исчезли на данном такте вирусы и пешеходы
+        //     // каждый элемент массивов virusEvt[] и может содержать ещё один массив - набор
+        //     // событий появления и исчезновения вирусов и инфицирования вирусами пешеходов 
+        //     // если на шаге(такте) timeStepV существуют какие=то события, то реализуем их
+        //     if(virusEvt[timeStepV].length!=0)
+        //     {
+        //         // каждый непустой элемент virusEvt[timeStepV] содержит массив объектов,
+        //         // описывающих событие, происходящее с вирусом свойство объекта evt определяет
+        //         // вид события
+        //         for(var i=0;i<virusEvt[timeStepV].length;i++)
+        //         {
+        //             var ind=virusEvt[timeStepV][i].numVir;
+        //             switch(virusEvt[timeStepV][i].evt)
+        //             {
+        //                 // virusEvt[timeStepV][i].evt='a' означает, что на шаге timeStepV
+        //                 // в видимой области появляется вирус, данные о котором содержатся
+        //                 // в объекте virusEvt[timeStepV][i]. значение virusEvt[timeStepV][i].numVir
+        //                 // содержит номер вируса в массиве virusArr,поскольку каждому вирусу может
+        //                 // соответствовать несколько событий, кроме того, при определенных
+        //                 // условиях некоторые из событий могут и не произойти, к примеру,
+        //                 // если вирус инфицировал пешехода, то он исчезает и событие выход
+        //                 // за границу видимой области уже не состоится
+        //                 // если evt='a', то происходит событие появления в видимой области
+        //                 case "a":
+        //                     // чтобы поместить объект в видимую область, находим первый
+        //                     // свободный спрайт в virusGrp и отображаем его на канвасе
+        //                     spr=virusGrp.getFirstDead();
+        //                     if(spr)
+        //                     {
+        //                         spr.setX(100+virusArr[ind].x*80);
+        //                         spr.setY((10-virusArr[ind].l+timeStepV)*80);
+        //                         spr.setActive(true);
+        //                         spr.setVisible(true);
+        //                         spr.setData({ col: virusArr[ind].x });
+        //                         virusArr[ind].spr=spr;
+        //                     }
+        //                     break;
+        //                 // evt='d' означает, что вирус добрался до нижнего края видимой области
+        //                 // и происходит его исчезновение, спрайт нужно освободить, чтобы
+        //                 // вернуть его в группу virusGrp
+        //                 case "d":
+        //                     virusArr[ind].spr.setVisible(false);
+        //                     virusArr[ind].spr.setActive(false);
+        //                     virusArr[ind].spr=null;
+        //                     virusArr[ind]=null;
+        //                     break;
+        //             }
+        //         }
+        //     }
+
+                        
+        //     // если нижний участок с вирусами вышел за нижнюю границу видимой области
+        //     // (для этого должно прокрутится 12 строчек, каждая высотой 80 пикселов),
+        //     // перемещаем его наверх и перенумеровываем так, чтобы элемент virGroupsArr
+        //     // с индексом 0 был ниже элемента с индексом 1
+        //     if(Math.floor((timeStepV-1)/12)!=Math.floor(timeStepV/12))
+        //     {
+        //         // var tmp=virGroupsArr[0];
+        //         // virGroupsArr[0]=virGroupsArr[1];
+        //         // virGroupsArr[1]=tmp;
+        //         // fillVirGroups(virGroupsArr[1],0,-1120);
+        //     }
+        // }
+
+        
+
+        // если раннер не упёрся в волкер, двигаем ивирусы и волкеры
+        // if(!olpV)
+        // {
+        //     if(Math.floor(walkDis/80)!=Math.floor((walkDis+deltaVir/2)/80))
+        //     {
+        //         timeStepW++;
+        //         if(walkerEvt[timeStepW].length!=0)
+        //         {
+        //             for(var i=0;i<walkerEvt[timeStepW].length;i++)
+        //             {
+        //                 var ind=walkerEvt[timeStepW][i].numWal;
+        //                 switch(walkerEvt[timeStepW][i].evt)
+        //                 {
+        //                     case "a":
+        //                         spr=walkerGrp.getFirstDead();
+        //                         if(spr)
+        //                         {
+        //                             spr.setX(100+walkerArr[ind].x*80);
+        //                             spr.setY((10-walkerArr[ind].l+timeStepW)*80);
+        //                             spr.setActive(true);
+        //                             spr.setVisible(true);
+        //                             spr.setData({ col: walkerArr[ind].x });
+        //                             walkerArr[ind].spr=spr;
+        //                         }
+        //                         break;
+        //                     case "d":
+        //                             walkerArr[ind].spr.setVisible(false);
+        //                             walkerArr[ind].spr.setActive(false);
+        //                             walkerArr[ind].spr=null;
+        //                         break;
+        //                 }
+        //             }
+        //         }       
+        //     }
+
+        //     walkDis+=deltaVir/2;
+        //     virDis+=deltaVir;
+        //     walkerGrp.incY(deltaVir/2);
+        //     grounds[0].y+=deltaVir;
+        //     virusGrp.incY(deltaVir);
+        // }
+        //else
+        // {
+        //     virDis+=deltaVir;
+        //     grounds[0].y+=deltaVir;
+        //     virusGrp.incY(deltaVir);
+        // }
+
+        
+        // if(!runner.body.blocked.none)
+        // {
+        //     var a=0;
+        // }
+        
+        let pointer = this.input.activePointer;
+
+        virusGrp.incY(deltaVir);
+        walkerGrp.incY(deltaWal);
+        grounds[0].y+=deltaVir;
+
+        if((grounds[0].y>0)&&(grounds[0].y<=800))
+        {
+            grounds[1].y=grounds[0].y-960;
+        }
+        if(grounds[0].y>800)
+        {
+            grounds[1].y=grounds[0].y-960;
+            let tmp=grounds[0];
+            grounds[0]=grounds[1];
+            grounds[1]=tmp;
+            grounds[1].y=-960;
+        }
+
+        
+        // physics.world.overlap генерирует событие пересечения группы walkers с
+        // раннером, но не позволяет определить с каким конкретно объектом из группы
+        // произошло пересечение, для этого в третьем аргументе указана callback
+        // функция, в которую движком передаются ссылки на раннер и на конкретный
+        // объект группы walkers
+
+        if(this.physics.world.overlap(runner,walkerGrp,walkersOverlap ))
+        {
+            if(olpH=='h')
+            {
+                runner.body.reset(140+runner.data.values.col*80, runner.y);
+                targetX=null;
+                olpH=null;
+            }
+            if(olpV)
+            {
+                //virus.setVelocityY(8);
+                //heroVelocity=16;
+                virVel=16;
+                walVel=0;
+            }
+            else
+            {
+                //virus.setVelocityY(16);
+                //heroVelocity=32;
+                virVel=32;
+                walVel=16;            
+            }
+        }
+        else
+        {
+            olpV=false;
+            virVel=32;
+            walVel=16;
+        }
+
+
+        // если раннер приблизился к центру целевой колонки менее, чем 
+        // на 5 пикселов, фиксируем его в этом центре
+        if(targetX && Math.abs(runner.x-targetX)<5)
+        {
+            runner.body.reset(targetX, runner.y);
+
+            if((140+runner.data.values.col*80)!=targetX)
+            {
+                if((140+runner.data.values.col*80)<targetX)
+                {
+                    runner.data.values.col++;
+                }
+                else
+                {
+                    runner.data.values.col--;
+                }
+            }
+            targetX=null;
+        }
+
+            // если раннер не находится в процессе смены колонки, то начинаем этот
+            // процесс - придаём ему скорость - вправо, если нажата правая кнопка
+            // мыши, влево, если левая и одновременно придаём ему ускорение,
+            // направленное против скорости (runner.setDragX()). Целью раннера
+            // targetX является x-координата центра соседней колонки
+            if((!targetX)&&pointer.rightButtonDown())
+            {
+                runner.setVelocityX(140);
+                runner.setDragX(120);
+                if(runner.data.values.col==4)
+                {
+                    targetX=460;
+                }
+                else
+                {
+                    targetX=140+(runner.data.values.col+1)*80;
+                }
+            }
+            if((!targetX)&&pointer.leftButtonDown())
+            {
+                runner.setVelocityX(-140);
+                runner.setDragX(120);
+
+                if(runner.data.values.col==0)
+                {
+                    targetX=140;
+                }
+                else
+                {
+                    targetX=140+(runner.data.values.col-1)*80;
+                }
+
+               
+            }
+        //timeStep++;
+        
+        text.setText([
+            'time: ' + time ,
+            'delTime: ' + delTime,
+            'walStep: ' + walStep ,
+            'virStep: ' +virStep,
+            'virDist : ' + virDist  ,
+            'walDist : ' + walDist,
+            'difDist :' + difDist,
+            'difStep :' + difStep
+    ]);
+    }
+
+    function walkersOverlap(runner,walker)
+    {
+        if(runner.data.values.col!=walker.data.values.col)
+        {
+            olpH='h';
+            olpV=false;
+        }
+        else
+        {
+            olpV=true;
+        }
+        // если раннер находится в колонке с меньшим индексом, чем колонка,
+        // в которой находится walker, значит, раннер коснулся его правым боком,
+        // в противном случае - левым
+        // if(runner.data.values.col<walker.data.values.col)
+        // {
+        //     runner.data.values.overlapX='r';
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        //     return;
+        // }
+
+        // if(runner.data.values.col>walker.data.values.col)
+        // {
+        //     runner.data.values.overlapX='l';
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        //     return;
+        // }
+    }
+
+    function checkVirEvt(step)
+    {
+        if(virusEvt[step].length!=0)
+        {
+            // каждый непустой элемент virusEvt[step] содержит массив объектов,
+            // описывающих событие, происходящее с вирусом свойство объекта evt определяет
+            // вид события
+            for(let i=0;i<virusEvt[step].length;i++)
+            {
+                let ind=virusEvt[step][i].numVir;
+                switch(virusEvt[step][i].evt)
+                {
+                    // virusEvt[step][i].evt='a' означает, что на шаге step
+                    // в видимой области появляется вирус, данные о котором содержатся
+                    // в объекте virusEvt[step][i]. значение virusEvt[step][i].numVir
+                    // содержит номер вируса в массиве virusArr,поскольку каждому вирусу может
+                    // соответствовать несколько событий, кроме того, при определенных
+                    // условиях некоторые из событий могут и не произойти, к примеру,
+                    // если вирус инфицировал пешехода, то он исчезает и событие выход
+                    // за границу видимой области уже не состоится
+                    // если evt='a', то происходит событие появления в видимой области
+                    case "a":
+                        // чтобы поместить объект в видимую область, находим первый
+                        // свободный спрайт в virusGrp и отображаем его на канвасе
+                        spr=virusGrp.getFirstDead();
+                        if(spr)
+                        {
+                            spr.setX(100+virusArr[ind].x*80);
+                            spr.setY((10-virusArr[ind].l+step)*80);
+                            spr.setActive(true);
+                            spr.setVisible(true);
+                            spr.setData({ col: virusArr[ind].x });
+                            virusArr[ind].spr=spr;
+
+                            // если вирус инфицирован до появления в видимой области,
+                            // то свойство h='inf' и тогда устанавливаем прозрачность
+                            // спрайту
+                            if(('h' in virusArr[ind])&&( virusArr[ind].h =='inf'))
+                            {
+                                virusArr[ind].spr.setAlpha(0.5);
+                            }
+                        }
+                        break;
+                    // evt='d' означает, что вирус добрался до нижнего края видимой области
+                    // и происходит его исчезновение, спрайт нужно освободить, чтобы
+                    // вернуть его в группу virusGrp
+                    case "d":
+                        virusArr[ind].spr.setVisible(false);
+                        virusArr[ind].spr.setActive(false);
+                        virusArr[ind].spr.setAlpha(1);
+                        virusArr[ind].spr=null;
+                        virusArr[ind]=null;
+                        break;
+                }
+            }
+        }
+    }
+
+    function checkWalEvt(step)
+    {
+        if(walkerEvt[step].length!=0)
+        {
+            for(let i=0;i<walkerEvt[step].length;i++)
+            {
+                let ind=walkerEvt[step][i].numWal;
+                switch(walkerEvt[step][i].evt)
+                {
+                    case "a":
+                        spr=walkerGrp.getFirstDead();
+                        if(spr)
+                        {
+                            spr.setX(100+walkerArr[ind].x*80);
+                            spr.setY((10-walkerArr[ind].l+step)*80);
+                            spr.setActive(true);
+                            spr.setVisible(true);
+                            spr.setData({ col: walkerArr[ind].x });
+                            walkerArr[ind].spr=spr;
+                            // если волкер инфицирован до появления в видимой области,
+                            // то свойство h='inf' и тогда устанавливаем прозрачность
+                            // спрайту
+                            if(('h' in walkerArr[ind])&&( walkerArr[ind].h =='inf'))
+                            {
+                                walkerArr[ind].spr.setAlpha(0.5);
+                            }
+                        }
+                        break;
+                    case "d":
+                            walkerArr[ind].spr.setVisible(false);
+                            walkerArr[ind].spr.setActive(false);
+                            walkerArr[ind].spr.setAlpha(1);
+                            walkerArr[ind].spr=null;
+                        break;
+                }
+            }
+        }  
+    }
+
+    function checkInfEvt(step)
+    {
+        if(walkerEvt[step].length!=0)
+        {
+            for(let i=0;i<walkerEvt[step].length;i++)
+            {
+                let ind=walkerEvt[step][i].numWal;
+                switch(walkerEvt[step][i].evt)
+                {
+                    case "inf":
+                        if(('spr' in walkerArr[ind])&&walkerArr[ind].spr)
+                        {
+                            walkerArr[ind].spr.setAlpha(0.5);
+                        }
+                        walkerArr[ind].h='inf';
+                        break;
+                }
+            }
+        }
+
+        if(virusEvt[step].length!=0)
+        {
+            for(let i=0;i<virusEvt[step].length;i++)
+            {
+                let ind=virusEvt[step][i].numVir;
+                switch(virusEvt[step][i].evt)
+                {
+                    case "inf":
+                        if(('spr' in virusArr[ind]) && virusArr[ind].spr)
+                        {
+                            virusArr[ind].spr.setAlpha(0.5);
+                        }
+                        virusArr[ind].h='inf';
+                        break;
+                }
+            }
+        }
+    }
+
+    // массив virusArr содержит координаты и время добавления вирусов на всём пути раннера
+    // в отличии от волкеров, местоположение вирусов на игровом поле всегда одно и то же,
+    // но за счёт изменения видимой области, которая перемещается вместе с раннером вверх,
+    // вирусы движутся сверху вниз по канвасу. Вирус в самой начальной точке пути имеет
+    // индекс 0, весь путь условно разбит на строчки и столбцы высотой и шириной 80 пикселов
+    // и начальные координаты x и y вирусов поэтому кратны 80 и массив содержит именно
+    // номера строк и столбцов. В конструкторе Pandemic 17 строк(от 0 до 16), пронумерованных сверху вниз,
+    // поэтому номер строки вируса в virusArr вычисляется как 16-str[].y0+steps
+    // индекс массива соответствует номеру строки, элемент массива является ещё одним
+    // массивом, содержащим объекты, описывающие состояние вирусов - активен, проникает в
+    // юниты или проник в юниты и исчез. Поскольку видимая область движется вместе с раннером,
+    // то нижний край видимой области движется вверх, номера нижней и верхней строк увеличиваются,
+    // расстояние между ними равно 8 строкам и при каждом изменении строки пробегается цикл
+    // по видимым строкам и проверяется следует ли изменить состояние вируса
+    
+    </script>
+
+</body>
+</html>

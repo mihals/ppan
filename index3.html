@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html>
+<head>
+<!-- данный файл использует manager4.js из pandemic -->
+    <script src="dist/phaser-arcade-physics.js"></script>
+    <!--script src="dist/phaser.js"></script-->
+</head>
+<body>
+
+    <script>
+    var config = {
+        type: Phaser.CANVAS,
+        width: 600,
+        height: 800,
+        backgroundColor: '0xffffff',
+        disableContextMenu:true,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                debug: true
+                }
+            },
+        scene: {
+            
+            preload: preload,
+            create: create,
+            update: update
+        },
+        scale: {
+            autoCenter: Phaser.Scale.CENTER_HORIZONTALLY, 
+            mode: Phaser.Scale.FIT  
+        }
+    };
+
+    var game = new Phaser.Game(config);
+    
+    function preload ()
+    {
+        this.load.image('runner', 'img/runner.png');
+        this.load.image('walker', 'img/walker.png')
+        this.load.image('tile', 'img/tile1.png');
+        this.load.image('virus', 'img/virus.png');
+    }
+
+    function create ()
+    {
+        // virusArr - массив, содержащий данные о вирусах, расположенных на пути
+        // игрока. Значение индекса соответствует номеру участка пути, весь путь
+        // шириной 5 клеток (400 пикселов) разбит на участки такой же ширины и
+        // длиной 12 клеток (960 пикселов), равной длине фонов в grounds 
+        // 
+
+        var str='[[{"x0":2,"y0":11,"type":"unit","time":0,"health":"healthy"},{"x0":2,"y0":9,"type":"virus","time":0}]]';
+        var timeStamps=JSON.parse(str);
+        // в конструкторе Pandemic 17 строчек, которые нумеруются от нуля сверху вниз,
+        // и 5 колонок с нумерацией от нуля слева направо. Таким образом, нумерация колонок
+        // совпадает с Ppan, номера строк надо вычислять
+        virusArr=[];
+        for(var i=0;i<timeStamps.length;i++)
+        {
+            virusArr[i]=[];
+            for(var j=0;j<timeStamps[i].length;j++)
+            {
+                if(timeStamps[i][j].type=='virus');
+                {
+                    virusArr[i][j]={};
+                    virusArr[i][j].r=16-timeStamps[i][j].y0;
+                    virusArr[i][j].c=timeStamps[i][j].x0;
+                }
+            }
+        }
+        // virusArr[0]=[];
+        // virusArr[0][0]={r:0,c:0};
+        // virusArr[0][1]={r:1,c:1};
+        // virusArr[0][2]={r:2,c:2};
+        // virusArr[0][3]={r:3,c:3};
+        // virusArr[0][4]={r:4,c:4};
+        //virusArr[0][5]={r:5,c:5};
+
+        // массив из двух элементов, содержащих фон игры, когда фон grounds=[0]
+        // опускается на deltaVir за каждый update вызов ниже верхней границы 
+        // области игры, сверху надставляется фон grounds=[1] и далее они 
+        // перемешаются вместе до тех пор, пока верх grounds=[0] не выйдет за
+        // нижнюю границу видимой области, тогда фон из grounds=[0] помещаем
+        // в grounds=[1], а фон из grounds=[1] наоборот в grounds=[0] и продолжаем
+        // двигать далее оба элемента массива дальше синхронно с вирусами 
+
+        grounds=[];
+        this.physics.world.setBounds(90,0,420,800);
+        //this.cameras.main.setBounds(0, 0, 400, 2620);
+        //this.cameras.main.setViewport(0, 200, 600, 800);
+        grounds[0]=this.add.tileSprite(0,0,400,960,'tile');
+        grounds[0].setDisplayOrigin();
+        grounds[0].x=100;
+        grounds[0].y=-160;
+
+        grounds[1]=this.add.tileSprite(0,0,400,960,'tile');
+        grounds[1].setDisplayOrigin();
+        grounds[1].x=100;
+        grounds[1].y=-1000;
+
+        // всё видимое поле 600x800, игровое поле имеет в ширину 400 пикселей,
+        // координата x его левой стороны равна 100, в длину игровое поле 
+        // условно неограничено, но длина видимой части равна 800 пикселям,  
+        // поле условно разбито на клеточки 80х80, получаем
+        // сетку размером 5 клеток в ширину и 10 клеток в длину, каждый
+        // юнит перемешается в своём столбце (за исключением раннера),
+        // нумерация столбцов начинается с нуля и возрастает слева
+        // направо, строк - снизу вверх, для спрайта 80 на 80 пикселей и с якорем
+        // в центре, в нулевом столбце находится юнит с x=140,
+        // в нулевой строке - юнит с y=740
+
+        // timeStep - условный счётчик времени, изначально = 0. Когда фон прокрутится
+        // вниз на высоту клетки (в данном случае на 80 пикселей), увеличивается на
+        // единицу. Таким образом, timeStep - это количество прокрученных строк,
+        // т.е. строк, вышедших за нижнюю границу видимой игровой зоны
+
+        // numGrounds - количество заполненных фонов или, по другому, участков пути,
+        // в каждый момент времени заполнено
+        // два фона - один над другим, которые перемещаются сверху вниз, и как только 
+        // нижний фон выходит за границу видимости, переиндексируем их в массиве grounds,
+        // переместим уже невидимый фон наверх, таким образом фон grounds[1] будет всегда
+        // выше grounds[0].
+
+        // На каждом участке пути расположены вирусы и прохожие, данные о вирусах и
+        // прохожих на каждом участке пути находятся в группах virGroupsArr[0] и
+        // virGroupsArr[1] для вирусов и walGroupsArr[0], walGroupsArr[1] для прохожих,
+        // фон для участков пути - в grounds[0], grounds[1]
+
+        timeStep=0;
+
+        var spr;
+        virusGrp=this.add.group();
+        for (var i=0;i<4;i++)
+        {
+            spr=this.add.sprite(i*100,i*100,'virus').setDisplayOrigin().setScale(2);
+            //spr.setActive(false);
+            virusGrp.add(spr);
+            //virusGrp.killAndHide(spr);
+            
+        }
+
+        virGroupsArr=[];
+        virGroupsArr[0]=this.add.group();
+        virGroupsArr[1]=this.add.group();
+
+        
+        for(var i=0;i<10;i++)
+        {
+            spr=this.add.sprite(-100,0,'virus').setDisplayOrigin().setScale(2);
+            virGroupsArr[0].add(spr);
+            spr=this.add.sprite(-100,0,'virus').setDisplayOrigin().setScale(2);
+            virGroupsArr[1].add(spr);
+        }
+
+        walGroupsArr=[];
+        walGroupsArr[0]=this.add.group();
+        walGroupsArr[1]=this.add.group();
+
+        // virArr=[];
+        // virArr[0]=[];
+
+        fillVirGroups(virGroupsArr[0],0, -160);
+        fillVirGroups(virGroupsArr[1],0, -1120);
+        //virGroupsArr[0]=this.add.group();
+
+        //virGroupArr=[];
+        //virContArr[0]=this.add.group();
+
+        walkers=this.physics.add.group();
+        
+        walker=this.add.sprite(0, 0, 'walker');
+        walker.scale=2; 
+        walker.x=140;
+        walker.y=440;
+        walker.setSize(80,80);
+        walker.setData({ col: 0, row: 9, state: 'healthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(0, 0, 'walker');
+        walker.scale=2; 
+        walker.x=220;
+        walker.y=520;
+        walker.setSize(80,80);
+        walker.setData({ col: 1, row: 8, state: 'healthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(300, 440, 'walker');
+        walker.scale=2; 
+        walker.x=300;
+        walker.y=440;
+        walker.setSize(80,80);
+        walker.setData({ col: 2, row: 9, state: 'healthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(340, 400, 'walker');
+        walker.scale=2; 
+        walker.x=380;
+        walker.y=520;
+        walker.setSize(80,80);
+        walker.setData({ col: 3, row: 5, state: 'healthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(340, 400, 'walker');
+        walker.scale=2; 
+        walker.x=460;
+        walker.y=280;
+        walker.setSize(80,80);
+        walker.setData({ col: 4, row: 5, state: 'healthy' });
+        walkers.add(walker);
+
+        //walker=this.physics.add.sprite(300, 600, 'walker');
+        //walkers.setVelocityY(8);
+        
+        //walker.setVelocityY(30);
+        //this.add.image(400, 300, 'runner');
+        
+        //var tile = this.add.image(200, 200,'tile');
+        
+        //var ground=this.add.tileSprite(0,0,200,200,'tile');
+
+        //vir2=this.textures.get("virus");
+        // vir2=this.make.renderTexture();
+        // vir2.draw('virus');
+        // vir2.scale=2;
+        // vir2.saveTexture("vir2");
+
+        virus = this.physics.add.sprite(200, 200,'virus');
+        
+        //this.cameras.main.followOffset.set(0, -100);
+        runner = this.physics.add.sprite(300, 700, 'runner');
+        runner.scale=2; 
+        runner.x=300;
+        runnerSrcX=300;
+        runner.y=680;
+        // overlapX!= null, если раннер не пересекается со спрайтом из
+        // соседней колонки, т.е. не касается боком, overlapX=='l', если
+        // левый бок раннера касается спрайта из группы walkers и
+        //  overlapX=='r', если касается правым
+        runner.setData({ col: 2, row: 2, state: 'healthy' });
+        runner.setCollideWorldBounds(true);
+        //runner.setSize(30,60);
+        //this.physics.add.overlap(runner, walkers,walkersOverlap);
+        //walker.setCollideWorldBounds(true);
+        //this.physics.add.collider(runner, walkers,runnerCollide,procCollide);
+        //runner.body.setBoundsRectangle(new Phaser.Geom.Rectangle(200, 550, 400, 300));
+        //runner = this.physics.add.sprite(300, 700, 'runner');
+        //runner.body.setVelocityX(-30);
+        //this.cameras.main.startFollow(runner);
+        //runner.setSize(20,20);
+        targetX=null;
+        olpH=null;
+        olpV=false;
+        virus.setVelocityY(16);
+        text = this.add.text(10, 600, 'Cursors to move', { font: '16px Courier', fill: '#000000' }).setScrollFactor(0);
+    }
+    function update ()
+    {
+        var deltaVir=virus.body.y-virus.body.prev.y;
+
+        // если с момента показа предыдущего кадра прокрутилась  до самого выхода
+        // из зоны видимости условная строчка (высотой в 80 пикселов), то прибавляем
+        // единичку к счётчику условного времени
+        if(Math.floor(grounds[0].y/80)!=Math.floor((grounds[0].y+deltaVir)/80))
+        {
+            timeStep++;
+            // если нижний участок с вирусами вышел за нижнюю границу видимой области
+            // (для этого должно прокрутится 12 строчек, каждая высотой 80 пикселов),
+            // перемещаем его наверх и перенумеровываем так, чтобы элемент virGroupsArr
+            // с индексом 0 был ниже элемента с индексом 1
+            if(Math.floor((timeStep-1)/12)!=Math.floor(timeStep/12))
+            {
+                var tmp=virGroupsArr[0];
+                virGroupsArr[0]=virGroupsArr[1];
+                virGroupsArr[1]=tmp;
+                fillVirGroups(virGroupsArr[1],0,-1120);
+            }
+        }
+
+        grounds[0].y+=deltaVir;
+        virGroupsArr[0].incY(deltaVir);
+        virGroupsArr[1].incY(deltaVir);
+
+        if(!olpV)
+        {
+            walkers.incY(deltaVir/2);
+        }
+
+        if(!runner.body.blocked.none)
+        {
+            var a=0;
+        }
+        
+        var pointer = this.input.activePointer;
+        
+        if((grounds[0].y>0)&&(grounds[0].y<=800))
+        {
+            grounds[1].y=grounds[0].y-960;
+        }
+        if(grounds[0].y>800)
+        {
+            grounds[1].y=grounds[0].y-960;
+            var tmp=grounds[0];
+            grounds[0]=grounds[1];
+            grounds[1]=tmp;
+            grounds[1].y=-960;
+        }
+
+        // if(!runner.data.values.overlapX)
+        // {
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        // }
+
+        // physics.world.overlap генерирует событие пересечения группы walkers с
+        // раннером, но не позволяет определить с каким конкретно объектом из группы
+        // произошло пересечение, для этого в третьем аргументе указана callback
+        // функция, в которую движком передаются ссылки на раннер и на конкретный
+        // объект группы walkers
+        if(this.physics.world.overlap(runner,walkers,walkersOverlap ))
+        {
+            if(olpH=='h')
+            {
+                runner.body.reset(140+runner.data.values.col*80, runner.y);
+                targetX=null;
+                olpH=null;
+            }
+            if(olpV)
+            {
+                virus.setVelocityY(8);
+            }
+            else
+            {
+                virus.setVelocityY(16);
+            }
+        }
+        else
+        {
+            olpV=false;
+            virus.setVelocityY(16);
+        }
+
+        // если раннер приблизился к центру целевой колонки менее, чем 
+        // на 5 пикселов, фиксируем его в этом центре
+        if(targetX && Math.abs(runner.x-targetX)<5)
+        {
+            runner.body.reset(targetX, runner.y);
+
+            if((140+runner.data.values.col*80)!=targetX)
+            {
+                if((140+runner.data.values.col*80)<targetX)
+                {
+                    runner.data.values.col++;
+                }
+                else
+                {
+                    runner.data.values.col--;
+                }
+            }
+            targetX=null;
+        }
+
+            // если раннер не находится в процессе смены колонки, то начинаем этот
+            // процесс - придаём ему скорость - вправо, если нажата правая кнопка
+            // мыши, влево, если левая и одновременно придаём ему ускорение,
+            // направленное против скорости (runner.setDragX()). Целью раннера
+            // targetX является x-координата центра соседней колонки
+            if((!targetX)&&pointer.rightButtonDown())
+            {
+                runner.setVelocityX(140);
+                runner.setDragX(120);
+                //var spr=virusArr[0].getFirstAlive();
+                //this.physics.moveToObject(runner, target, 200);
+                if(runner.data.values.col==4)
+                {
+                    targetX=460;
+                }
+                else
+                {
+                    targetX=140+(runner.data.values.col+1)*80;
+                }
+
+                var spr=virusGrp.getFirstAlive();
+                if(spr)
+                {
+                    spr.setActive(false);
+                    spr.setVisible(false);
+                }
+            }
+            if((!targetX)&&pointer.leftButtonDown())
+            {
+                runner.setVelocityX(-140);
+                runner.setDragX(120);
+
+                var spr=virusGrp.getFirstDead();
+                if(spr)
+                {
+                    spr.setActive(true);
+                    spr.setVisible(true);
+                }
+
+                if(runner.data.values.col==0)
+                {
+                    targetX=140;
+                }
+                else
+                {
+                    targetX=140+(runner.data.values.col-1)*80;
+                }
+
+               
+            }
+        
+        // if((runner.x-300)>30)
+        // {
+        //     runner.body.reset(300, runner.y);
+        // }
+
+        // if(this.physics.world.overlap(walkers, runner))
+        // {
+        //     runner.body.reset(runner.x+5,runner.y);
+        // }
+
+        // if(this.physics.world.overlap(runner,walkers,walkersOverlap ))
+        // {
+            
+        // }
+
+        text.setText([
+        'rCol: ' + runner.data.values.col,
+        'runner.x: ' + runner.x,
+        'targetX : ' + targetX  ,
+        'timeStep : ' + timeStep
+    ]);
+    }
+
+    function walkersOverlap(runner,walker)
+    {
+        if(runner.data.values.col!=walker.data.values.col)
+        {
+            olpH='h';
+            olpV=false;
+        }
+        else
+        {
+            olpV=true;
+        }
+        // если раннер находится в колонке с меньшим индексом, чем колонка,
+        // в которой находится walker, значит, раннер коснулся его правым боком,
+        // в противном случае - левым
+        // if(runner.data.values.col<walker.data.values.col)
+        // {
+        //     runner.data.values.overlapX='r';
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        //     return;
+        // }
+
+        // if(runner.data.values.col>walker.data.values.col)
+        // {
+        //     runner.data.values.overlapX='l';
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        //     return;
+        // }
+    }
+
+    // функция для заполнения вышедшего из поля зрения участка вирусами,
+    // передаются в качестве аргумента ссылка на группу, номер участка и
+    // y-координата фона, который нужно заполнить
+    function fillVirGroups(group, numPart,topY)
+    {
+        
+        if(virusArr.length>=numPart)
+        {
+            group.setX(-100);
+            var spr;
+            for(var i=0;i<virusArr[0].length;i++)
+            {
+                spr=group.getChildren()[i];
+                spr.setX(100+virusArr[0][i].c*80);
+                spr.setY(topY+880-virusArr[0][i].r*80);
+
+            }
+        }
+    }
+    </script>
+
+</body>
+</html>

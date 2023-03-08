@@ -1,0 +1,335 @@
+<!-- файл сохранён как промежуточный, в следующей версии планируется заменить переход раннера
+из одной колонки в другую не когда скорость станет равной нулю, а когда x-координата приблизится
+на расстояние меньше 5 пикселов к следующей колонке --> 
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="dist/phaser-arcade-physics.js"></script>
+    <!--script src="dist/phaser.js"></script-->
+</head>
+<body>
+
+    <script>
+    var config = {
+        type: Phaser.CANVAS,
+        width: 600,
+        height: 800,
+        backgroundColor: '0xffffff',
+        disableContextMenu:true,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                debug: true
+                }
+            },
+        scene: {
+            
+            preload: preload,
+            create: create,
+            update: update
+        },
+        scale: {
+            autoCenter: Phaser.Scale.CENTER_HORIZONTALLY, 
+            mode: Phaser.Scale.FIT  
+        }
+    };
+
+    var game = new Phaser.Game(config);
+    
+    function preload ()
+    {
+        this.load.image('runner', 'img/runner.png');
+        this.load.image('walker', 'img/walker.png')
+        this.load.image('tile', 'img/tile.png');
+        this.load.image('virus', 'img/virus.png');
+    }
+
+    function create ()
+    {
+        // массив из двух элементов, содержащих фон игры, когда фон grounds=[0]
+        // опускается на deltaVir за каждый update вызов ниже верхней границы 
+        // области игры, сверху надставляется фон grounds=[1] и далее они 
+        // перемешаются вместе до тех пор, пока верх grounds=[0] не выйдет за
+        // нижнюю границу видимой области, тогда фон из grounds=[0] помещаем
+        // в grounds=[1], а фон из grounds=[1] наоборот в grounds=[0] и продолжаем
+        // двигать далее оба элемента массива дальше синхронно с вирусами  
+        grounds=[];
+        this.physics.world.setBounds(90,0,420,800);
+        //this.cameras.main.setBounds(0, 0, 400, 2620);
+        //this.cameras.main.setViewport(0, 200, 600, 800);
+        grounds[0]=this.add.tileSprite(0,0,400,960,'tile');
+        grounds[0].setDisplayOrigin();
+        grounds[0].x=100;
+        grounds[0].y=-160;
+
+        grounds[1]=this.add.tileSprite(0,0,400,960,'tile');
+        grounds[1].setDisplayOrigin();
+        grounds[1].x=100;
+        grounds[1].y=-1000;
+
+        // всё видимое поле 600x800, игровое поле имеет в ширину 400 пикселей,
+        // координата x его левой стороны равна 100, в длину игровое поле 
+        // условно неограничено, но длина видимой части равна 800 пикселям,  
+        // поле условно разбито на клеточки 80х80, получаем
+        // сетку размером 5 клеток в ширину и 10 клеток в длину, каждый
+        // юнит перемешается в своём столбце (за исключением раннера),
+        // нумерация столбцов начинается с нуля и возрастает слева
+        // направо, строк - снизу вверх, для спрайта 80 на 80 пикселей и с якорем
+        // в центре в нулевом столбце находится юнит с x=140,
+        // в нулевой строке - юнит с y=740
+        walkers=this.physics.add.group();
+        
+        walker=this.add.sprite(0, 0, 'walker');
+        walker.scale=2; 
+        walker.x=140;
+        walker.y=440;
+        walker.setSize(80,80);
+        walker.setData({ col: 0, row: 9, state: 'helthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(0, 0, 'walker');
+        walker.scale=2; 
+        walker.x=220;
+        walker.y=520;
+        walker.setSize(80,80);
+        walker.setData({ col: 1, row: 8, state: 'helthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(300, 440, 'walker');
+        walker.scale=2; 
+        walker.x=300;
+        walker.y=440;
+        walker.setSize(80,80);
+        walker.setData({ col: 2, row: 9, state: 'helthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(340, 400, 'walker');
+        walker.scale=2; 
+        walker.x=380;
+        walker.y=520;
+        walker.setSize(80,80);
+        walker.setData({ col: 3, row: 5, state: 'helthy' });
+        walkers.add(walker);
+
+        walker=this.add.sprite(340, 400, 'walker');
+        walker.scale=2; 
+        walker.x=460;
+        walker.y=280;
+        walker.setSize(80,80);
+        walker.setData({ col: 4, row: 5, state: 'helthy' });
+        walkers.add(walker);
+
+        //walker=this.physics.add.sprite(300, 600, 'walker');
+        //walkers.setVelocityY(8);
+        
+        //walker.setVelocityY(30);
+        //this.add.image(400, 300, 'runner');
+        
+        //var tile = this.add.image(200, 200,'tile');
+        virus = this.physics.add.sprite(200, 200,'virus');
+        //var ground=this.add.tileSprite(0,0,200,200,'tile');
+        
+        //this.cameras.main.followOffset.set(0, -100);
+        runner = this.physics.add.sprite(300, 700, 'runner');
+        runner.scale=2; 
+        runner.x=300;
+        runnerSrcX=300;
+        //runner.y=280;
+        // overlapX!= null, если раннер не пересекается со спрайтом из
+        // соседней колонки, т.е. не касается боком, overlapX=='l', если
+        // левый бок раннера касается спрайта из группы walkers и
+        //  overlapX=='r', если касается правым
+        runner.setData({ drag: null, overlapX: null, col: 2, row: 2, state: 'helthy' });
+        runner.setCollideWorldBounds(true);
+        //runner.setSize(30,60);
+        //this.physics.add.overlap(runner, walkers,walkersOverlap);
+        //walker.setCollideWorldBounds(true);
+        //this.physics.add.collider(runner, walkers,runnerCollide,procCollide);
+        //runner.body.setBoundsRectangle(new Phaser.Geom.Rectangle(200, 550, 400, 300));
+        //runner = this.physics.add.sprite(300, 700, 'runner');
+        //runner.body.setVelocityX(-30);
+        //this.cameras.main.startFollow(runner);
+        olpH=null;
+        olpV=false;
+        virus.setVelocityY(16);
+        text = this.add.text(10, 600, 'Cursors to move', { font: '16px Courier', fill: '#000000' }).setScrollFactor(0);
+    }
+    function update ()
+    {
+        var deltaVir=virus.body.y-virus.body.prev.y;
+        grounds[0].y+=deltaVir;
+        if(!olpV)
+        {
+            walkers.incY(deltaVir/2);
+        }
+
+        if(!runner.body.blocked.none)
+        {
+            var a=0;
+        }
+        
+        var pointer = this.input.activePointer;
+        
+        if((grounds[0].y>0)&&(grounds[0].y<=800))
+        {
+            grounds[1].y=grounds[0].y-960;
+        }
+        if(grounds[0].y>800)
+        {
+            grounds[1].y=grounds[0].y-960;
+            var tmp=grounds[0];
+            grounds[0]=grounds[1];
+            grounds[1]=tmp;
+            grounds[1].y=-1000;
+        }
+
+        // if(!runner.data.values.overlapX)
+        // {
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        // }
+
+        // physics.world.overlap генерирует событие пересечения группы walkers с
+        // раннером, но не позволяет определить с каким конкретно объектом из группы
+        // произошло пересечение, для этого в третьем аргументе указана callback
+        // функция, в которую движком передаются ссылки на раннер и на конкретный
+        // объект группы walkers
+        if(this.physics.world.overlap(runner,walkers,walkersOverlap ))
+        {
+            if(olpH=='h')
+            {
+                runner.body.reset(100+runner.data.values.col*80, runner.y);
+                runner.data.values.drag=null;
+                olpH=null;
+            }
+            if(olpV)
+            {
+                virus.setVelocityY(8);
+            }
+            else
+            {
+                virus.setVelocityY(16);
+            }
+        }
+        else
+        {
+            olpV=false;
+            virus.setVelocityY(16);
+        }
+
+        // если раннер не перемещается по горизонтали
+        if(runner.body.velocity.x==0)
+        {
+            // если движение по горизонтали только завершилось,
+            // то устанавливаем drag=null
+            if(runner.data.values.drag)
+            {
+                switch(runner.data.values.drag)
+                {
+                    // если двигались вправо
+                    case 'r':
+                    // если достигли крайне правой пятой колонки (с индексом 4), 
+                    // т.е шаг вправо был сделан из текущей колонки с индексом 3
+                        if(runner.data.values.col==4)
+                        {
+                            runner.data.values.drag=null;
+                            runner.data.values.col=4;
+                            runner.body.reset(460, runner.y);
+                        }
+                        else
+                        {
+                            runner.data.values.drag=null;
+                            runner.data.values.col++;
+                            runner.body.reset(100+runner.data.values.col*80, runner.y);
+                        }
+
+                    break;
+                    case 'l':
+                    if(runner.data.values.col==0)
+                        {
+                            runner.data.values.drag=null;
+                            runner.data.values.col=0;
+                            runner.body.reset(100, runner.y);
+                        }
+                        else
+                        {
+                            runner.data.values.drag=null;
+                            runner.data.values.col--;
+                            runner.body.reset(100+runner.data.values.col*80, runner.y);
+                        }
+                    break;
+                }
+            }
+
+            if(pointer.rightButtonDown()&&(!runner.data.values.drag))
+            {
+                runner.setVelocityX(140);
+                runner.setDragX(120);
+                //this.physics.moveToObject(runner, target, 200);
+                runner.data.values.drag='r';
+            }
+            if(pointer.leftButtonDown()&&(!runner.data.values.drag))
+            {
+                runner.setVelocityX(-140);
+                runner.setDragX(120);
+                runner.data.values.drag='l';
+            }
+        }
+
+        // if((runner.x-300)>30)
+        // {
+        //     runner.body.reset(300, runner.y);
+        // }
+
+        // if(this.physics.world.overlap(walkers, runner))
+        // {
+        //     runner.body.reset(runner.x+5,runner.y);
+        // }
+
+        // if(this.physics.world.overlap(runner,walkers,walkersOverlap ))
+        // {
+            
+        // }
+
+        text.setText([
+        'rCol: ' + runner.data.values.col,
+        'runner.x: ' + runner.x,
+        'runnerDrag : ' + runner.data.values.drag  ,
+        'olpV : ' + olpV
+    ]);
+    }
+
+    function walkersOverlap(runner,walker)
+    {
+        if(runner.data.values.col!=walker.data.values.col)
+        {
+            olpH='h';
+            olpV=false;
+        }
+        else
+        {
+            olpV=true;
+        }
+        // если раннер находится в колонке с меньшим индексом, чем колонка,
+        // в которой находится walker, значит, раннер коснулся его правым боком,
+        // в противном случае - левым
+        // if(runner.data.values.col<walker.data.values.col)
+        // {
+        //     runner.data.values.overlapX='r';
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        //     return;
+        // }
+
+        // if(runner.data.values.col>walker.data.values.col)
+        // {
+        //     runner.data.values.overlapX='l';
+        //     runner.body.reset(140+runner.data.values.col*40, runner.y);
+        //     runner.data.values.overlapX=null;
+        //     return;
+        // }
+    }
+    </script>
+
+</body>
+</html>
